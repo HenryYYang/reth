@@ -38,8 +38,8 @@ fn convert_to_proof<'a>(path: impl IntoIterator<Item = &'a str>) -> Vec<Bytes> {
     path.into_iter().map(Bytes::from_str).collect::<Result<Vec<_>, _>>().unwrap()
 }
 
-#[test]
-fn testspec_proofs() {
+#[tokio::test]
+async fn testspec_proofs() {
     // Create test database and insert genesis accounts.
     let factory = create_test_provider_factory();
     let root = insert_genesis(&factory, TEST_SPEC.clone()).unwrap();
@@ -83,7 +83,7 @@ fn testspec_proofs() {
         ),
     ]);
 
-    let provider = factory.provider().unwrap();
+    let provider = factory.await.provider().unwrap();
     for (target, expected_proof) in data {
         let target = Address::from_str(target).unwrap();
         let account_proof = Proof::from_tx(provider.tx_ref()).account_proof(target, &[]).unwrap();

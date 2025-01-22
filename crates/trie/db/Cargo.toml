@@ -41,6 +41,7 @@ triehash = { version = "0.8", optional = true }
 
 # `serde` feature
 serde = { workspace = true, optional = true }
+tokio = "1.41.1"
 
 [dev-dependencies]
 # reth

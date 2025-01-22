@@ -58,3 +58,6 @@ pub use benchmark_args::BenchmarkArgs;
 
 mod error;
 pub mod types;
+
+mod redis_args;
+pub use redis_args::RedisArgs;

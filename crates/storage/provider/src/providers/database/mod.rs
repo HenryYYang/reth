@@ -14,7 +14,7 @@ use alloy_eips::{
 use alloy_primitives::{Address, BlockHash, BlockNumber, TxHash, TxNumber, B256, U256};
 use core::fmt;
 use reth_chainspec::{ChainInfo, EthereumHardforks};
-use reth_db::{init_db, mdbx::DatabaseArguments, DatabaseEnv};
+use reth_db::{init_db, redis::DatabaseArguments, DatabaseEnv};
 use reth_db_api::{database::Database, models::StoredBlockBodyIndices};
 use reth_errors::{RethError, RethResult};
 use reth_evm::ConfigureEvmEnv;
@@ -129,13 +129,14 @@ impl<N: NodeTypesWithDB<DB = Arc<DatabaseEnv>>> ProviderFactory<N> {
     /// Create new database provider by passing a path. [`ProviderFactory`] will own the database
     /// instance.
     pub fn new_with_database_path<P: AsRef<Path>>(
+        redis_url: &String,
         path: P,
         chain_spec: Arc<N::ChainSpec>,
         args: DatabaseArguments,
         static_file_provider: StaticFileProvider<N::Primitives>,
     ) -> RethResult<Self> {
         Ok(Self {
-            db: Arc::new(init_db(path, args).map_err(RethError::msg)?),
+            db: Arc::new(init_db(redis_url, path, args).map_err(RethError::msg)?),
             chain_spec,
             static_file_provider,
             prune_modes: PruneModes::none(),
@@ -590,41 +591,15 @@ impl<N: ProviderNodeTypes> StageCheckpointReader for ProviderFactory<N> {
 }
 
 impl<N: ProviderNodeTypes> EvmEnvProvider<HeaderTy<N>> for ProviderFactory<N> {
-    fn fill_env_with_header<EvmConfig>(
+    fn env_with_header<EvmConfig>(
         &self,
-        cfg: &mut CfgEnvWithHandlerCfg,
-        block_env: &mut BlockEnv,
         header: &HeaderTy<N>,
         evm_config: EvmConfig,
-    ) -> ProviderResult<()>
+    ) -> ProviderResult<(CfgEnvWithHandlerCfg, BlockEnv)>
     where
         EvmConfig: ConfigureEvmEnv<Header = HeaderTy<N>>,
     {
-        self.provider()?.fill_env_with_header(cfg, block_env, header, evm_config)
-    }
-
-    fn fill_cfg_env_at<EvmConfig>(
-        &self,
-        cfg: &mut CfgEnvWithHandlerCfg,
-        at: BlockHashOrNumber,
-        evm_config: EvmConfig,
-    ) -> ProviderResult<()>
-    where
-        EvmConfig: ConfigureEvmEnv<Header = HeaderTy<N>>,
-    {
-        self.provider()?.fill_cfg_env_at(cfg, at, evm_config)
-    }
-
-    fn fill_cfg_env_with_header<EvmConfig>(
-        &self,
-        cfg: &mut CfgEnvWithHandlerCfg,
-        header: &HeaderTy<N>,
-        evm_config: EvmConfig,
-    ) -> ProviderResult<()>
-    where
-        EvmConfig: ConfigureEvmEnv<Header = HeaderTy<N>>,
-    {
-        self.provider()?.fill_cfg_env_with_header(cfg, header, evm_config)
+        self.provider()?.env_with_header(header, evm_config)
     }
 }
 
@@ -683,7 +658,7 @@ mod tests {
     use rand::Rng;
     use reth_chainspec::ChainSpecBuilder;
     use reth_db::{
-        mdbx::DatabaseArguments,
+        redis::DatabaseArguments,
         tables,
         test_utils::{create_test_static_files_dir, ERROR_TEMPDIR},
     };
@@ -694,16 +669,17 @@ mod tests {
     use reth_testing_utils::generators::{self, random_block, random_header, BlockParams};
     use std::{ops::RangeInclusive, sync::Arc};
     use tokio::sync::watch;
+    use reth_db::test_utils::{get_redis_url, get_redis_container};
 
-    #[test]
-    fn common_history_provider() {
-        let factory = create_test_provider_factory();
+    #[tokio::test]
+    async fn common_history_provider() {
+        let factory = create_test_provider_factory().await;
         let _ = factory.latest();
     }
 
-    #[test]
-    fn default_chain_info() {
-        let factory = create_test_provider_factory();
+    #[tokio::test]
+    async fn default_chain_info() {
+        let factory = create_test_provider_factory().await;
         let provider = factory.provider().unwrap();
 
         let chain_info = provider.chain_info().expect("should be ok");
@@ -711,9 +687,9 @@ mod tests {
         assert_eq!(chain_info.best_hash, B256::ZERO);
     }
 
-    #[test]
-    fn provider_flow() {
-        let factory = create_test_provider_factory();
+    #[tokio::test]
+    async fn provider_flow() {
+        let factory = create_test_provider_factory().await;
         let provider = factory.provider().unwrap();
         provider.block_hash(0).unwrap();
         let provider_rw = factory.provider_rw().unwrap();
@@ -721,11 +697,14 @@ mod tests {
         provider.block_hash(0).unwrap();
     }
 
-    #[test]
-    fn provider_factory_with_database_path() {
+    #[tokio::test]
+    async fn provider_factory_with_database_path() {
         let chain_spec = ChainSpecBuilder::mainnet().build();
         let (_static_dir, static_dir_path) = create_test_static_files_dir();
+        let container = get_redis_container().await;
+        let redis_url = get_redis_url(&container).await;
         let factory = ProviderFactory::<MockNodeTypesWithDB<DatabaseEnv>>::new_with_database_path(
+            &redis_url,
             tempfile::TempDir::new().expect(ERROR_TEMPDIR).into_path(),
             Arc::new(chain_spec),
             DatabaseArguments::new(Default::default()),
@@ -740,9 +719,9 @@ mod tests {
         provider.block_hash(0).unwrap();
     }
 
-    #[test]
-    fn insert_block_with_prune_modes() {
-        let factory = create_test_provider_factory();
+    #[tokio::test]
+    async fn insert_block_with_prune_modes() {
+        let factory = create_test_provider_factory().await;
 
         let block = TEST_BLOCK.clone();
         {
@@ -783,9 +762,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn take_block_transaction_range_recover_senders() {
-        let factory = create_test_provider_factory();
+    #[tokio::test]
+    async fn take_block_transaction_range_recover_senders() {
+        let factory = create_test_provider_factory().await;
 
         let mut rng = generators::rng();
         let block =
@@ -820,9 +799,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn header_sync_gap_lookup() {
-        let factory = create_test_provider_factory();
+    #[tokio::test]
+    async fn header_sync_gap_lookup() {
+        let factory = create_test_provider_factory().await;
         let provider = factory.provider_rw().unwrap();
 
         let mut rng = generators::rng();

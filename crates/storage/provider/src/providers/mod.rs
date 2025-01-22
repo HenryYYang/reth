@@ -1,3 +1,5 @@
+use core::fmt;
+
 use crate::{
     AccountReader, BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, BlockReaderIdExt,
     BlockSource, BlockchainTreePendingStateProvider, CanonStateNotifications,
@@ -26,7 +28,8 @@ use reth_db::table::Value;
 use reth_db_api::models::{AccountBeforeTx, StoredBlockBodyIndices};
 use reth_evm::ConfigureEvmEnv;
 use reth_node_types::{
-    BlockTy, FullNodePrimitives, HeaderTy, NodeTypes, NodeTypesWithDB, ReceiptTy, TxTy,
+    BlockTy, FullNodePrimitives, HeaderTy, NodeTypes, NodeTypesWithDB, NodeTypesWithEngine,
+    ReceiptTy, TxTy,
 };
 use reth_primitives::{
     Account, BlockWithSenders, EthPrimitives, Receipt, SealedBlock, SealedBlockFor,
@@ -104,8 +107,14 @@ impl<T> ProviderNodeTypes for T where T: NodeTypesForProvider + NodeTypesWithDB 
 
 /// A helper trait with requirements for [`NodeTypesForProvider`] to be used within legacy
 /// blockchain tree.
-pub trait NodeTypesForTree: NodeTypesForProvider<Primitives = EthPrimitives> {}
-impl<T> NodeTypesForTree for T where T: NodeTypesForProvider<Primitives = EthPrimitives> {}
+pub trait NodeTypesForTree:
+    NodeTypesForProvider<Primitives = EthPrimitives> + NodeTypesWithEngine
+{
+}
+impl<T> NodeTypesForTree for T where
+    T: NodeTypesForProvider<Primitives = EthPrimitives> + NodeTypesWithEngine
+{
+}
 
 /// Helper trait with requirements for [`ProviderNodeTypes`] to be used within legacy blockchain
 /// tree.
@@ -117,7 +126,6 @@ impl<T> TreeNodeTypes for T where T: ProviderNodeTypes + NodeTypesForTree {}
 /// This type serves as the main entry point for interacting with the blockchain and provides data
 /// from database storage and from the blockchain tree (pending state etc.) It is a simple wrapper
 /// type that holds an instance of the database and the blockchain tree.
-#[allow(missing_debug_implementations)]
 pub struct BlockchainProvider<N: NodeTypesWithDB> {
     /// Provider type used to access the database.
     database: ProviderFactory<N>,
@@ -591,41 +599,15 @@ impl<N: ProviderNodeTypes> StageCheckpointReader for BlockchainProvider<N> {
 }
 
 impl<N: TreeNodeTypes> EvmEnvProvider for BlockchainProvider<N> {
-    fn fill_env_with_header<EvmConfig>(
+    fn env_with_header<EvmConfig>(
         &self,
-        cfg: &mut CfgEnvWithHandlerCfg,
-        block_env: &mut BlockEnv,
         header: &Header,
         evm_config: EvmConfig,
-    ) -> ProviderResult<()>
+    ) -> ProviderResult<(CfgEnvWithHandlerCfg, BlockEnv)>
     where
         EvmConfig: ConfigureEvmEnv<Header = Header>,
     {
-        self.database.provider()?.fill_env_with_header(cfg, block_env, header, evm_config)
-    }
-
-    fn fill_cfg_env_at<EvmConfig>(
-        &self,
-        cfg: &mut CfgEnvWithHandlerCfg,
-        at: BlockHashOrNumber,
-        evm_config: EvmConfig,
-    ) -> ProviderResult<()>
-    where
-        EvmConfig: ConfigureEvmEnv<Header = Header>,
-    {
-        self.database.provider()?.fill_cfg_env_at(cfg, at, evm_config)
-    }
-
-    fn fill_cfg_env_with_header<EvmConfig>(
-        &self,
-        cfg: &mut CfgEnvWithHandlerCfg,
-        header: &Header,
-        evm_config: EvmConfig,
-    ) -> ProviderResult<()>
-    where
-        EvmConfig: ConfigureEvmEnv<Header = Header>,
-    {
-        self.database.provider()?.fill_cfg_env_with_header(cfg, header, evm_config)
+        self.database.provider()?.env_with_header(header, evm_config)
     }
 }
 
@@ -981,5 +963,11 @@ impl<N: ProviderNodeTypes> AccountReader for BlockchainProvider<N> {
     /// Get basic account information.
     fn basic_account(&self, address: Address) -> ProviderResult<Option<Account>> {
         self.database.provider()?.basic_account(address)
+    }
+}
+
+impl<N: NodeTypesWithDB> fmt::Debug for BlockchainProvider<N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BlockchainProvider").finish_non_exhaustive()
     }
 }

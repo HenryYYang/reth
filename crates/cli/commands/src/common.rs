@@ -2,17 +2,17 @@
 
 use alloy_primitives::B256;
 use clap::Parser;
-use reth_beacon_consensus::EthBeaconConsensus;
 use reth_chainspec::EthChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_config::{config::EtlConfig, Config};
+use reth_consensus::noop::NoopConsensus;
 use reth_db::{init_db, open_db_read_only, DatabaseEnv};
 use reth_db_common::init::init_genesis;
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
 use reth_evm::noop::NoopBlockExecutorProvider;
 use reth_node_builder::{NodeTypesWithDBAdapter, NodeTypesWithEngine};
 use reth_node_core::{
-    args::{DatabaseArgs, DatadirArgs},
+    args::{DatabaseArgs, DatadirArgs, RedisArgs},
     dirs::{ChainPath, DataDirPath},
 };
 use reth_primitives::EthPrimitives;
@@ -26,6 +26,8 @@ use std::{path::PathBuf, sync::Arc};
 use tokio::sync::watch;
 use tracing::{debug, info, warn};
 
+//TODO: read from config
+pub const REDIS_URL: &str = "redis://localhost:6379";
 /// Struct to hold config and datadir paths
 #[derive(Debug, Parser)]
 pub struct EnvironmentArgs<C: ChainSpecParser> {
@@ -52,6 +54,10 @@ pub struct EnvironmentArgs<C: ChainSpecParser> {
     /// All database related arguments
     #[command(flatten)]
     pub db: DatabaseArgs,
+
+    /// All redis related arguments
+    #[command(flatten)]
+    pub redis: RedisArgs,
 }
 
 impl<C: ChainSpecParser> EnvironmentArgs<C> {
@@ -86,11 +92,11 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
         info!(target: "reth::cli", ?db_path, ?sf_path, "Opening storage");
         let (db, sfp) = match access {
             AccessRights::RW => (
-                Arc::new(init_db(db_path, self.db.database_args())?),
+                Arc::new(init_db(&self.redis.redis_url, db_path, self.db.database_args())?),
                 StaticFileProvider::read_write(sf_path)?,
             ),
             AccessRights::RO => (
-                Arc::new(open_db_read_only(&db_path, self.db.database_args())?),
+                Arc::new(open_db_read_only(&self.redis.redis_url, &db_path, self.db.database_args())?),
                 StaticFileProvider::read_only(sf_path, false)?,
             ),
         };
@@ -151,10 +157,10 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
                 .add_stages(DefaultStages::new(
                     factory.clone(),
                     tip_rx,
-                    Arc::new(EthBeaconConsensus::new(self.chain.clone())),
+                    Arc::new(NoopConsensus::default()),
                     NoopHeaderDownloader::default(),
                     NoopBodiesDownloader::default(),
-                    NoopBlockExecutorProvider::default(),
+                    NoopBlockExecutorProvider::<N::Primitives>::default(),
                     config.stages.clone(),
                     prune_modes.clone(),
                 ))

@@ -11,7 +11,7 @@ use reth_node_builder::{NodeBuilder, WithLaunchContext};
 use reth_node_core::{
     args::{
         DatabaseArgs, DatadirArgs, DebugArgs, DevArgs, NetworkArgs, PayloadBuilderArgs,
-        PruningArgs, RpcServerArgs, TxPoolArgs,
+        PruningArgs, RpcServerArgs, TxPoolArgs, RedisArgs,
     },
     node_config::NodeConfig,
     version,
@@ -107,6 +107,10 @@ pub struct NodeCommand<
     #[command(flatten)]
     pub pruning: PruningArgs,
 
+    /// All redis related arguments
+    #[command(flatten)]
+    pub redis: RedisArgs,
+
     /// Additional cli arguments
     #[command(flatten, next_help_heading = "Extension")]
     pub ext: Ext,
@@ -159,6 +163,7 @@ impl<
             db,
             dev,
             pruning,
+            redis,
             ext,
         } = self;
 
@@ -183,7 +188,7 @@ impl<
         let db_path = data_dir.db();
 
         tracing::info!(target: "reth::cli", path = ?db_path, "Opening database");
-        let database = Arc::new(init_db(db_path.clone(), self.db.database_args())?.with_metrics());
+        let database = Arc::new(init_db(&redis.redis_url, db_path.clone(), self.db.database_args())?.with_metrics());
 
         if with_unused_ports {
             node_config = node_config.with_unused_ports();
