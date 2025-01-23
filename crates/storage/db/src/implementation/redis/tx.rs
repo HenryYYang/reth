@@ -21,7 +21,7 @@ use std::borrow::Cow;
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::RwLock;
-use redis::{cluster::ClusterClient, Commands, ErrorKind, Iter, Pipeline, RedisError, RedisResult, Value as RedisValue};
+use redis::{Client, Commands, ErrorKind, Iter, Pipeline, RedisError, RedisResult, Value as RedisValue};
 
 /// Duration after which we emit the log about long-lived database transactions.
 const LONG_TRANSACTION_DURATION: Duration = Duration::from_secs(60);
@@ -83,7 +83,7 @@ pub struct Tx<K: TransactionKind> {
     pub inner: Transaction<K>,
 
     /// redis client
-    redis: Arc<ClusterClient>,
+    redis: Arc<Client>,
 
     /// Handler for metrics with its own [Drop] implementation for cases when the transaction isn't
     /// closed by [`Tx::commit`] or [`Tx::abort`], but we still need to report it in the metrics.
@@ -112,7 +112,7 @@ impl<K: TransactionKind> Tx<K> {
     #[inline]
     pub const fn new(
         inner: Transaction<K>,
-        redis: Arc<ClusterClient>,
+        redis: Arc<Client>,
         pipeline: Arc<RwLock<Pipeline>>,
         uncommitted_data: Arc<RwLock<HashMap<Vec<u8>, CachedValue>>>,
         deleted_keys: Arc<RwLock<HashMap<Vec<u8>, CachedValue>>>,
@@ -127,7 +127,7 @@ impl<K: TransactionKind> Tx<K> {
     #[track_caller]
     pub(crate) fn new_with_metrics(
         inner: Transaction<K>,
-        redis: Arc<ClusterClient>,
+        redis: Arc<Client>,
         env_metrics: Option<Arc<DatabaseEnvMetrics>>,
     ) -> reth_libmdbx::Result<Self> {
         let metrics_handler = env_metrics
@@ -144,7 +144,7 @@ impl<K: TransactionKind> Tx<K> {
     #[inline]
     const fn new_inner(
         inner: Transaction<K>,
-        redis: Arc<ClusterClient>,
+        redis: Arc<Client>,
         metrics_handler: Option<MetricsHandler<K>>,
         pipeline: Arc<RwLock<Pipeline>>,
         uncommitted_data: Arc<RwLock<HashMap<Vec<u8>, CachedValue>>>,
@@ -409,6 +409,7 @@ impl<K: TransactionKind> fmt::Debug for Tx<K> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Tx")
             .field("inner", &self.inner)
+            .field("redis", &self.redis)
             .field("metrics_handler", &self.metrics_handler)
             // .field("uncommitted_data", &self.uncommitted_data)
             // .field("deleted_keys", &self.deleted_keys)

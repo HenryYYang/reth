@@ -16,7 +16,7 @@ use reth_db_api::{
 use reth_libmdbx::{Error as MDBXError, TransactionKind, WriteFlags, RO, RW};
 use reth_storage_errors::db::{DatabaseErrorInfo, DatabaseWriteError, DatabaseWriteOperation};
 use std::{borrow::Cow, collections::Bound, marker::PhantomData, ops::RangeBounds, sync::Arc};
-use redis::{cluster::ClusterClient, Commands, ErrorKind, RedisError, RedisResult, Value};
+use redis::{Client, Commands, ErrorKind, RedisError, RedisResult, Value};
 
 /// Read only Cursor.
 pub type CursorRO<T> = Cursor<RO, T>;
@@ -24,6 +24,7 @@ pub type CursorRO<T> = Cursor<RO, T>;
 pub type CursorRW<T> = Cursor<RW, T>;
 
 /// Cursor wrapper to access KV items.
+#[derive(Debug)]
 pub struct Cursor<K: TransactionKind, T: Table> {
     /// Inner `libmdbx` cursor.
     pub(crate) inner: reth_libmdbx::Cursor<K>,
@@ -35,7 +36,7 @@ pub struct Cursor<K: TransactionKind, T: Table> {
     _dbi: PhantomData<T>,
 
     /// redis client
-    redis: Arc<ClusterClient>,
+    redis: Arc<Client>,
 
     /// The current key the cursor is pointing to
     current_key: Option<T::Key>
@@ -50,7 +51,7 @@ pub struct StateROCursor<K: TransactionKind, T: Table> {
     _dbi: PhantomData<T>,
 
     /// redis client
-    redis: Arc<ClusterClient>,
+    redis: Arc<Client>,
 
     /// The current key the cursor is pointing to
     current_key: Option<T::Key>
@@ -59,7 +60,7 @@ pub struct StateROCursor<K: TransactionKind, T: Table> {
 impl<K: TransactionKind, T: Table> Cursor<K, T> {
     pub(crate) const fn new_with_metrics(
         inner: reth_libmdbx::Cursor<K>,
-        redis: Arc<ClusterClient>,
+        redis: Arc<Client>,
         metrics: Option<Arc<DatabaseEnvMetrics>>,
     ) -> Self {
         // TODO cursor might need to be initialized with it pointing to the last element in the db.
@@ -87,7 +88,7 @@ impl<K: TransactionKind, T: Table> Cursor<K, T> {
 impl<K: TransactionKind, T: Table> StateROCursor<K, T> {
     pub(crate) fn new_with_metrics(
         inner: reth_libmdbx::Cursor<K>,
-        redis: Arc<ClusterClient>,
+        redis: Arc<Client>,
         metrics: Option<Arc<DatabaseEnvMetrics>>,
     ) -> Self {
         Self { inner, metrics, _dbi: PhantomData, redis, current_key: None }
@@ -704,30 +705,4 @@ fn from(value: RedisError) -> DatabaseErrorInfo {
         _ => 0,
     };
     DatabaseErrorInfo { message: Box::from(value.to_string()), code }
-}
-
-impl<K: TransactionKind, T: Table> std::fmt::Debug for Cursor<K, T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Cursor")
-            .field("inner", &self.inner)
-            .field("buf", &self.buf)
-            .field("metrics", &self.metrics)
-            .field("_dbi", &std::any::type_name::<T>())
-            // Because ClusterClient does not implement Debug, we'll replace it with a placeholder.
-            .field("redis", &"<ClusterClient>")
-            .field("current_key", &self.current_key)
-            .finish()
-    }
-}
-
-impl<K: TransactionKind, T: Table> std::fmt::Debug for StateROCursor<K, T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("StateROCursor")
-            .field("inner", &self.inner)
-            .field("metrics", &self.metrics)
-            .field("_dbi", &std::any::type_name::<T>())
-            .field("redis", &"<ClusterClient>")
-            .field("current_key", &self.current_key)
-            .finish()
-    }
 }

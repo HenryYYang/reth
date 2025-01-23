@@ -16,14 +16,12 @@ use reth_db_api::{
     models::ClientVersion,
     transaction::{DbTx, DbTxMut},
 };
-
 use reth_libmdbx::{
     ffi, DatabaseFlags, Environment, EnvironmentFlags, Geometry, HandleSlowReadersReturnCode,
     MaxReadTransactionDuration, Mode, PageSize, SyncMode, RO, RW,
 };
-use reth_storage_errors::db::{DatabaseErrorInfo, DatabaseWriteError, DatabaseWriteOperation, LogLevel};
+use reth_storage_errors::db::LogLevel;
 use reth_tracing::tracing::error;
-use redis::{cluster::ClusterClient, Commands, RedisError};
 use std::{
     ops::{Deref, Range},
     path::Path,
@@ -31,6 +29,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tx::Tx;
+use redis::{Commands, Connection, RedisError, RedisResult, ErrorKind};
 
 pub mod cursor;
 pub mod tx;
@@ -51,7 +50,7 @@ const DEFAULT_MAX_READERS: u64 = 32_000;
 /// See [`reth_libmdbx::EnvironmentBuilder::set_handle_slow_readers`] for more information.
 const MAX_SAFE_READER_SPACE: usize = 10 * GIGABYTE;
 
-/// Environment used when opening a Redis environment. RO/RW.
+/// Environment used when opening a MDBX environment. RO/RW.
 #[derive(Debug)]
 pub enum DatabaseEnvKind {
     /// Read-only Redis environment.
@@ -167,27 +166,18 @@ impl DatabaseArguments {
     }
 }
 
-/// Wrapper for the libmdbx environment and Redis client
+/// Wrapper for the libmdbx environment: [Environment]
+/// Wrapper for the redis client: [Redis]
+#[derive(Debug)]
 pub struct DatabaseEnv {
     /// Libmdbx-sys environment.
     inner: Environment,
-    /// Redis cluster client
-    client: Arc<ClusterClient>,
+    /// Redis client.
+    client: Arc<redis::Client>,
     /// Cache for metric handles. If `None`, metrics are not recorded.
     metrics: Option<Arc<DatabaseEnvMetrics>>,
     /// Write lock for when dealing with a read-write environment.
     _lock_file: Option<StorageLock>,
-}
-
-impl std::fmt::Debug for DatabaseEnv {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DatabaseEnv")
-            .field("inner", &self.inner)
-            // Skip client field since it doesn't implement Debug
-            .field("metrics", &self.metrics)
-            .field("_lock_file", &self._lock_file)
-            .finish()
-    }
 }
 
 impl Database for DatabaseEnv {
@@ -448,13 +438,7 @@ impl DatabaseEnv {
             inner_env.set_max_read_transaction_duration(max_read_transaction_duration);
         }
 
-
-        // Split the URL into individual node addresses for Redis cluster
-        let urls: Vec<String> = url.split(',')
-            .map(|s| s.to_string())
-            .collect();
-        let client = ClusterClient::new(urls)
-            .map_err(|e| DatabaseError::Open(from(e)))?;
+        let client = redis::Client::open(url).unwrap();
 
         let env = Self {
             inner: inner_env.open(path).map_err(|e| DatabaseError::Open(e.into()))?,
@@ -466,7 +450,7 @@ impl DatabaseEnv {
         Ok(env)
     }
 
-    /// Enables metrics for the database environment
+    /// Enables metrics on the database.
     pub fn with_metrics(mut self) -> Self {
         self.metrics = Some(DatabaseEnvMetrics::new().into());
         self
@@ -524,23 +508,6 @@ impl Deref for DatabaseEnv {
     }
 }
 
-#[inline]
-fn from(value: RedisError) -> DatabaseErrorInfo {
-    let code = match value.kind() {
-        redis::ErrorKind::ResponseError => 1,
-        redis::ErrorKind::AuthenticationFailed => 2,
-        redis::ErrorKind::TypeError => 3,
-        redis::ErrorKind::ExecAbortError => 4,
-        redis::ErrorKind::BusyLoadingError => 5,
-        redis::ErrorKind::NoScriptError => 6,
-        redis::ErrorKind::InvalidClientConfig => 7,
-        redis::ErrorKind::IoError => 8,
-        redis::ErrorKind::ClientError => 9,
-        _ => 0,
-    };
-    DatabaseErrorInfo { message: Box::from(value.to_string()), code }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -590,12 +557,7 @@ mod tests {
         let port = container.get_host_port_ipv4(6379.tcp()).unwrap();
         let connection_info = format!("redis://localhost:{}", port);
 
-        let env = DatabaseEnv::open(
-            connection_info.as_ref(),
-            path,
-            kind,
-            DatabaseArguments::new(ClientVersion::default()),
-        )
+        let env = DatabaseEnv::open(connection_info.as_ref(), path, kind, DatabaseArguments::new(ClientVersion::default()))
             .expect(ERROR_DB_CREATION);
         env.create_tables().expect(ERROR_TABLE_CREATION);
 
