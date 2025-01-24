@@ -2133,12 +2133,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19d374276b40fb8bbdee95aef7c7fa6b5316ec764510eb64b8dd0e2ed0d7e7f5"
 
 [[package]]
-name = "crc16"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "338089f42c427b86394a5ee60ff321da23a5c89c9d89514c829687b26359fcff"
-
-[[package]]
 name = "crc32fast"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6607,10 +6601,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e0d7a6955c7511f60f3ba9e86c6d02b3c3f144f8c24b288d1f4e18074ab8bbec"
 dependencies = [
  "combine",
- "crc16",
  "itoa",
  "percent-encoding",
- "rand 0.8.5",
  "ryu",
  "sha1_smol",
  "socket2",
@@ -10151,6 +10143,21 @@ name = "route-recognizer"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "afab94fb28594581f62d981211a9a4d53cc8130bbcbbb89a0440d9b8e81a7746"
+
+[[package]]
+name = "rpc-node"
+version = "1.1.4"
+dependencies = [
+ "eyre",
+ "futures",
+ "jsonrpsee",
+ "reth",
+ "reth-chainspec",
+ "reth-db",
+ "reth-node-ethereum",
+ "reth-provider",
+ "tokio",
+]
 
 [[package]]
 name = "rstest"
