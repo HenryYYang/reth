@@ -425,7 +425,24 @@ impl<K: TransactionKind> DbTx for Tx<K> {
     type DupCursor<T: DupSort> = Cursor<K, T>;
 
     fn get<T: Table>(&self, key: T::Key) -> Result<Option<<T as Table>::Value>, DatabaseError> {
-        self.get_by_encoded_key::<T>(&key.encode())
+        // let key: <<T as Table>::Key as Encode>::Encoded = key.encode();
+        let redis_key = Tx::<K>::generate_redis_key::<T>(&key);
+        self.execute_with_operation_metric::<T, _>(Operation::Get, None, |tx| {
+            if self.deleted_keys.read().unwrap().contains_key(&redis_key) {
+                Ok(None)
+            } else if let Some(value) = self.uncommitted_data.read().unwrap().get(&redis_key) {
+                Ok(Some(decode_one::<T>(Cow::Owned(value.value.clone().unwrap().to_vec()))?))
+            } else {
+                // TODO: review the isolation for this case, should we read from redis?
+                let mut connection = self.redis.get_connection().map_err(|e| DatabaseError::Open(from(e)))?;
+                let value: Option<Vec<u8>> = connection.get(redis_key).map_err(|e| DatabaseError::Read(from(e)))?;
+                if let Some(value) = value {
+                    Ok(Some(decode_one::<T>(Cow::Owned(value))?))
+                } else {
+                    Ok(None)
+                }
+            }
+        })
     }
 
     fn get_by_encoded_key<T: Table>(

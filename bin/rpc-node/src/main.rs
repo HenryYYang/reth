@@ -34,18 +34,20 @@ use reth_node_ethereum::{EthEvmConfig, EthExecutorProvider, EthereumNode};
 use reth_node_ethereum::node::EthereumEngineValidator;
 use reth_provider::{test_utils::TestCanonStateSubscriptions, ChainSpecProvider};
 
+use reth_chainspec::{ChainSpec, HOLESKY};
+
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     // 1. Setup the DB
     let db_path = std::env::var("RETH_DB_PATH")?;
     let db_path = Path::new(&db_path);
-    let redis_url = "redis://chainnodetestdt.psi2zx.ng.0001.use1.cache.amazonaws.com:6379";
+    let redis_url = std::env::var("RETH_REDIS_URL")?;
     let db = Arc::new(open_db_read_only(
         &redis_url.to_string(),
         db_path.join("db").as_path(),
         DatabaseArguments::new(ClientVersion::default()),
     )?);
-    let spec = Arc::new(ChainSpecBuilder::mainnet().build());
+    let spec = HOLESKY.clone();
     let factory = ProviderFactory::<NodeTypesWithDBAdapter<EthereumNode, Arc<DatabaseEnv>>>::new(
         db.clone(),
         spec.clone(),
