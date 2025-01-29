@@ -1,17 +1,5 @@
-//! Run with
-//!
-//! ```not_rust
-//! cargo run -p rpc-node
-//! ```
-//!
-//! This installs an additional RPC method `myrpcExt_customMethod` that can queried via [cast](https://github.com/foundry-rs/foundry)
-//!
-//! ```sh
-//! cast rpc myrpcExt_customMethod
-//! ```
-
-use std::{path::Path, sync::Arc};
-
+use std::{path::{Path, PathBuf}, sync::Arc};
+use clap::Parser;
 use reth::{
     api::NodeTypesWithDBAdapter,
     beacon_consensus::EthBeaconConsensus,
@@ -21,47 +9,81 @@ use reth::{
     },
     rpc::eth::EthApi,
     utils::open_db_read_only,
+    rpc::builder::{
+        RethRpcModule, RpcModuleBuilder, RpcServerConfig, TransportRpcModuleConfig,
+    },
+    blockchain_tree::noop::NoopBlockchainTree,
+    tasks::TokioTaskExecutor,
 };
-use reth_chainspec::ChainSpecBuilder;
+use reth_chainspec::{ChainSpec, MAINNET, SEPOLIA, HOLESKY};
 use reth_db::{redis::DatabaseArguments, ClientVersion, DatabaseEnv};
-
-// Bringing up the RPC
-use reth::rpc::builder::{
-    RethRpcModule, RpcModuleBuilder, RpcServerConfig, TransportRpcModuleConfig,
-};
-use reth::{blockchain_tree::noop::NoopBlockchainTree, tasks::TokioTaskExecutor};
 use reth_node_ethereum::{EthEvmConfig, EthExecutorProvider, EthereumNode};
 use reth_node_ethereum::node::EthereumEngineValidator;
 use reth_provider::{test_utils::TestCanonStateSubscriptions, ChainSpecProvider};
 
-use reth_chainspec::{ChainSpec, HOLESKY};
+/// A helper function to pick a chain spec based on a user-supplied string.
+/// Defaults to MAINNET if the chain name is unrecognized.
+fn get_chain_spec(chain_name: &str) -> Arc<ChainSpec> {
+    match chain_name.to_lowercase().as_str() {
+        "mainnet" => MAINNET.clone(),
+        "sepolia" => SEPOLIA.clone(),
+        "holesky" => HOLESKY.clone(),
+        _ => {
+            eprintln!("Unsupported chain name: {chain_name}. Defaulting to MAINNET.");
+            MAINNET.clone()
+        }
+    }
+}
+
+/// Command line options
+#[derive(Parser, Debug)]
+#[command(name = "rpc-node", author, version, about = "A sample node with a custom RPC method")]
+struct Cli {
+    /// Data directory for the node (contains the DB)
+    #[arg(long, default_value = "./data")]
+    datadir: PathBuf,
+
+    /// Redis URL to connect to
+    #[arg(long, default_value = "redis://127.0.0.1:6379")]
+    redis_url: String,
+
+    /// The HTTP port for the RPC server to listen on
+    #[arg(long, default_value = "9090")]
+    http_port: u16,
+
+    /// Name of the chain to use (e.g., mainnet, sepolia, goerli, holesky)
+    #[arg(long, default_value = "mainnet")]
+    chain: String,
+}
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
+    // Parse command line arguments
+    let cli = Cli::parse();
+
+    // Choose the chain spec based on user input
+    let spec = get_chain_spec(&cli.chain);
+
     // 1. Setup the DB
-    let db_path = std::env::var("RETH_DB_PATH")?;
-    let db_path = Path::new(&db_path);
-    let redis_url = std::env::var("RETH_REDIS_URL")?;
+    let db_path = cli.datadir.join("db");
     let db = Arc::new(open_db_read_only(
-        &redis_url.to_string(),
-        db_path.join("db").as_path(),
+        &cli.redis_url,
+        Path::new(&db_path),
         DatabaseArguments::new(ClientVersion::default()),
     )?);
-    let spec = HOLESKY.clone();
+
     let factory = ProviderFactory::<NodeTypesWithDBAdapter<EthereumNode, Arc<DatabaseEnv>>>::new(
         db.clone(),
         spec.clone(),
-        StaticFileProvider::read_only(db_path.join("static_files"), true)?,
+        StaticFileProvider::read_only(cli.datadir.join("static_files"), true)?,
     );
 
-    // 2. Setup the blockchain provider using only the database provider and a noop for the tree to
-    //    satisfy trait bounds. Tree is not used in this example since we are only operating on the
-    //    disk and don't handle new blocks/live sync etc, which is done by the blockchain tree.
+    // 2. Setup the blockchain provider
     let provider = BlockchainProvider::new(factory, Arc::new(NoopBlockchainTree::default()))?;
 
     let rpc_builder = RpcModuleBuilder::default()
         .with_provider(provider.clone())
-        // Rest is just noops that do nothing
+        // The following methods are placeholders for a minimal example
         .with_noop_pool()
         .with_noop_network()
         .with_executor(TokioTaskExecutor::default())
@@ -70,7 +92,7 @@ async fn main() -> eyre::Result<()> {
         .with_block_executor(EthExecutorProvider::ethereum(provider.chain_spec()))
         .with_consensus(EthBeaconConsensus::new(spec.clone()));
 
-    // Pick which namespaces to expose.
+    // Pick which namespaces to expose
     let config = TransportRpcModuleConfig::default().with_http([RethRpcModule::Eth]);
     let mut server = rpc_builder.build(
         config,
@@ -78,9 +100,9 @@ async fn main() -> eyre::Result<()> {
         Arc::new(EthereumEngineValidator::new(spec)),
     );
 
-    // Start the server & keep it alive
-    let server_args =
-        RpcServerConfig::http(Default::default()).with_http_address("0.0.0.0:9090".parse()?);
+    // Start the server & keep it alive on the user-specified port
+    let server_args = RpcServerConfig::http(Default::default())
+        .with_http_address(format!("0.0.0.0:{}", cli.http_port).parse()?);
     let _handle = server_args.start(&server).await?;
     futures::future::pending::<()>().await;
 

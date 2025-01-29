@@ -22,6 +22,7 @@ reth-node-ethereum.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["full"] }
 eyre.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
 
 [[bin]]
 name = "rpc-node"
