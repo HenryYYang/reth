@@ -103,7 +103,12 @@ async fn main() -> eyre::Result<()> {
     // Start the server & keep it alive on the user-specified port
     let server_args = RpcServerConfig::http(Default::default())
         .with_http_address(format!("0.0.0.0:{}", cli.http_port).parse()?);
+    println!("Starting RPC server with:");
+    println!("  Chain: {}", cli.chain);
+    println!("  Redis URL: {}", cli.redis_url);
+    println!("  HTTP Port: {}", cli.http_port);
     let _handle = server_args.start(&server).await?;
+    println!("RPC server started on port {}", cli.http_port);
     futures::future::pending::<()>().await;
 
     Ok(())
